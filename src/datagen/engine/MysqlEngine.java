@@ -7,6 +7,7 @@
 package datagen.engine;
 
 import datagen.Database;
+import datagen.Utils;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -35,6 +36,7 @@ public class MysqlEngine extends Engine{
         dataTypes.put("datetime", DataType.Timestamp);
         dataTypes.put("date", DataType.Date);
         dataTypes.put("time", DataType.Time);
+        dataTypes.put("double", DataType.Floating);
     }
 
     @Override
@@ -80,15 +82,27 @@ public class MysqlEngine extends Engine{
                     column.field = resultSet.getString(1);
                     column.typeName = resultSet.getString(2);
                     column.nullable = resultSet.getString(3).equals("YES");
-                    column.primaryKey = resultSet.getString(4).equals("PRI");
+                    switch(resultSet.getString(4)){
+                        case "PRI":
+                            column.primaryKey = true;
+                            break;
+                        case "MUL":
+                            column.foreignKey = true;
+                            break;
+                    }
+                        
                     proccessDataType(column.typeName, column);
+                    proccessOptions(column, resultSet.getString(6));
                     table.addColumn(column);
                     
-                    fields.append(column.field);
-                    fields.append(",");
+                    //if(!column.autoIncrement){
+                        fields.append(column.field);
+                        fields.append(",");
+
+                        values.append(generateValueField(column));
+                        values.append(",");
+                    //}
                     
-                    values.append(generateValueField(column));
-                    values.append(",");
                 }
                                 
                 fields.deleteCharAt(fields.length()-1);
@@ -97,14 +111,73 @@ public class MysqlEngine extends Engine{
                 values.append(");");
                 
                 resultSet.close();
-                System.out.println(fields.toString() + values.toString());
-                System.out.println(table.toString());
                 
                 queries.put(table.getName(), fields.toString() + values.toString());
             }
             statement.close();
+            
+            proccessForeignReferences();
         }catch(Exception ex){
             System.err.println(ex);
+        }
+    }
+    
+    private void proccessForeignReferences(){
+        Statement statement;
+        ResultSet resultSet;
+        Database database;
+        Table base;
+        Table reference;
+        String baseName;
+        String referenceName;
+        Column column;
+        try{
+            statement = connection.createStatement();
+            database = Database.getInstance();
+            referenceName = "";
+            baseName = "";
+            base = null;
+            reference = null;
+            
+            resultSet = statement.executeQuery("select REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME, TABLE_NAME, COLUMN_NAME " +
+                                               "from INFORMATION_SCHEMA.KEY_COLUMN_USAGE " +
+                                               "where REFERENCED_TABLE_NAME is not null and " +
+                                               "TABLE_SCHEMA = '"+database.getName()+"' " +
+                                               "order by Table_name;");
+            
+            while(resultSet.next()){
+                if(!baseName.equals(resultSet.getString(3))){
+                    base = database.getTable(resultSet.getString(3));
+                    baseName = base.getName();
+                }
+                if(!referenceName.equals(resultSet.getString(1))){
+                    reference = database.getTable(resultSet.getString(1));
+                    referenceName = reference.getName();
+                }
+                column = base.getColumn(resultSet.getString(4));
+                column.referenceColumn = reference.getColumn(resultSet.getString(2));
+                column.foreignKey = true;
+                column.columnName = reference.getName();
+                if(!base.getReferences().contains(referenceName)){
+                    base.getReferences().add(referenceName);
+                }
+            }
+            
+            resultSet.close();
+            statement.close();
+        }catch(Exception e){
+            System.err.println(e.getMessage());
+        }
+    }
+    
+    private void proccessOptions(Column column, String options){
+        String[] split;
+        try{
+            split = options.split(",");
+            if(Utils.arrayContains(split, "auto_increment"))
+                column.autoIncrement = true;
+        }catch(Exception e){
+            System.err.println(e.getMessage());
         }
     }
     
@@ -140,9 +213,10 @@ public class MysqlEngine extends Engine{
     }
 
     @Override
-    public void connect(String database, String user, String password) throws ClassNotFoundException, SQLException{
+    public void connect(String database, String host, String port, String user, String password) throws ClassNotFoundException, SQLException{
+        super.connect(database, host, port, user, password);
         Class.forName(driver);
-        connection = DriverManager.getConnection(database, user, password);
+        connection = DriverManager.getConnection("jdbc:mysql://"+host+":"+port+"/"+database, user, password);
     }    
 
     @Override
@@ -160,6 +234,40 @@ public class MysqlEngine extends Engine{
             
         }catch(Exception e){
             
+        }
+    }
+
+    @Override
+    public void createQueries() {
+        StringBuilder fields;
+        StringBuilder values;
+        try{
+            queries.clear();
+            
+            for(Table table : Database.getInstance().getTables()){
+                fields = new StringBuilder();
+                values = new StringBuilder();
+                
+                fields.append("INSERT INTO ");
+                fields.append(table.getName());
+                fields.append(" (");
+                
+                for(Column column : table.getColumns()){
+                    fields.append(column.field);
+                    fields.append(",");
+                    values.append(generateValueField(column));
+                    values.append(",");
+                }
+                                
+                fields.deleteCharAt(fields.length()-1);
+                fields.append(") VALUES (");
+                values.deleteCharAt(values.length()-1);
+                values.append(");");
+                
+                queries.put(table.getName(), fields.toString() + values.toString());
+            }
+        }catch(Exception ex){
+            System.err.println(ex);
         }
     }
 }

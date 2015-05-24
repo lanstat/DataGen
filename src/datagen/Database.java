@@ -15,6 +15,7 @@ import java.util.ArrayList;
  */
 public class Database {
     private final ArrayList<Table> tables;
+    private String name;
     private static Database instance;
     
     private Database(){
@@ -29,8 +30,31 @@ public class Database {
         return instance;
     }
     
+    public Table getTable(String name){
+        Table response;
+        try{
+            response = null;
+            for(Table table : tables){
+                if(table.getName().equals(name)){
+                    response = table;
+                    break;
+                }
+            }
+        }catch(Exception e){
+            response = null;
+        }
+        return response;
+    }
+    
     public ArrayList<Table> getTables(){
         return tables;
     }
     
+    public void setName(String name){
+        this.name = name;
+    }
+    
+    public String getName(){
+        return name;
+    }
 }
